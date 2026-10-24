@@ -1,0 +1,98 @@
+name: Collect and deploy
+
+on:
+  schedule:
+    - cron: '17 */3 * * *' # every 3 hours, at :17 to avoid the top-of-hour rush
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      collect:
+        description: Collect fresh data (otherwise only rebuild from saved data)
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+# Never run two collectors at once, they would overwrite each other's state.
+concurrency:
+  group: radar
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Load saved state from the data branch
+        id: state
+        run: |
+          mkdir -p data
+          if git ls-remote --exit-code --heads origin data >/dev/null; then
+            git fetch --depth 1 origin data
+            git show origin/data:state.json > data/state.json
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Collect on schedule, on manual runs, and on the very first push (no data yet).
+      - name: Collect data
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.collect) || steps.state.outputs.exists == 'false'
+        working-directory: collector
+        env:
+          STATE_FILE: ../data/state.json
+          OUT_DIR: ../site/public/data
+        run: node collect.mjs
+
+      - name: Rebuild data from saved state
+        if: "!(github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.collect) || steps.state.outputs.exists == 'false')"
+        working-directory: collector
+        env:
+          STATE_FILE: ../data/state.json
+          OUT_DIR: ../site/public/data
+        run: node render.mjs
+
+      # The data branch holds one commit with the latest state, force-pushed each run, so it never grows.
+      - name: Save state to the data branch
+        if: hashFiles('data/state.json') != ''
+        run: |
+          mkdir /tmp/databranch && cp data/state.json /tmp/databranch/
+          cd /tmp/databranch
+          git init -q -b data
+          git config user.name "steam-radar-bot"
+          git config user.email "steam-radar-bot@users.noreply.github.com"
+          git add state.json
+          git commit -q -m "Collector state $(date -u +%FT%TZ)"
+          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data
+
+      - name: Build site
+        working-directory: site
+        env:
+          VITE_PROXY_URL: ${{ vars.PROXY_URL }}
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
