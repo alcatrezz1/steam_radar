@@ -60,7 +60,7 @@ Tags near the top of a game's tag list count more. Weights live in `shared/scori
    2. Workers & Pages, Create, Create Worker, give it a name, Deploy, then Edit code.
    3. Replace the code with `worker/worker.js`, Deploy.
    4. Copy the worker URL (like `https://steam-radar.<you>.workers.dev`).
-   5. In this repo: Settings, Secrets and variables, Actions, Variables, New variable `PROXY_URL` with that URL.
+   5. Put that URL in `DEFAULT_PROXY` in `site/src/lib/config.ts`, or set a `PROXY_URL` repo variable (Settings, Secrets and variables, Actions, Variables).
    6. Re-run the workflow (untick *Collect* to only rebuild).
 
 ## Local development
