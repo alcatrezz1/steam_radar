@@ -32,19 +32,31 @@ export async function get(url, { as = 'json', retries = 2, backoff = 30000, head
 }
 
 // Run fn over items, `concurrency` at a time, waiting `gap` ms between starts per worker.
-export async function pool(items, concurrency, gap, fn) {
+// On a rate limit the pool cools down for `cooldown` ms and carries on; after `strikes` limits it gives up for this run.
+// Returns how many items finished without an error.
+export async function pool(items, concurrency, gap, fn, { strikes = 1, cooldown = 0 } = {}) {
+  const total = items.length;
   let i = 0;
+  let done = 0;
+  let left = strikes;
   let stopped = false;
-  const stop = () => { stopped = true; };
   const worker = async () => {
     while (!stopped && i < items.length) {
       const item = items[i++];
       try {
-        await fn(item, stop);
+        await fn(item);
+        done++;
       } catch (e) {
         if (e instanceof RateLimited) {
-          console.warn('  rate limited, stopping this source for the run:', e.message);
-          stopped = true;
+          left--;
+          if (left <= 0) {
+            console.warn(`  rate limited, stopping this source for the run (${done}/${total} done):`, e.message);
+            stopped = true;
+          } else {
+            console.warn(`  rate limited, cooling down ${Math.round(cooldown / 1000)} s (${left} tries left)`);
+            items.splice(i, 0, item); // put the item back so it is retried after the pause
+            await sleep(cooldown);
+          }
         } else {
           console.warn('  skip:', e.message);
         }
@@ -53,4 +65,5 @@ export async function pool(items, concurrency, gap, fn) {
     }
   };
   await Promise.all(Array.from({ length: concurrency }, worker));
+  return done;
 }

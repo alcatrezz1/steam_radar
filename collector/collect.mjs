@@ -26,8 +26,8 @@ const hourIndex = Math.floor(now / HOUR);
 const BUDGET = {
   store: Number(process.env.STORE_BUDGET || 900), // ~1.5 s each
   spy: Number(process.env.SPY_BUDGET || 900), //     ~1.1 s each
-  followers: 400,
-  roblox: 120,
+  followers: 150, // ~2.5 s each, the rest are picked up by the next runs
+  roblox: 60, //     ~5 s each, Roblox search limits hard
 };
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -167,10 +167,11 @@ await step('followers', async () => {
     .sort(byRelevance)
     .slice(0, BUDGET.followers);
   log('  followers queue:', todo.length);
-  await pool(todo, 2, 1000, async (g) => {
+  const ok = await pool(todo, 1, 2500, async (g) => {
     const count = await src.steamFollowers(g.appid);
     if (count != null) g.followers = { count, fetchedAt: now };
-  });
+  }, { strikes: 4, cooldown: 60000 });
+  log('  followers updated:', ok);
 });
 
 // ---------- 6. Roblox copies for the best candidates ----------
@@ -190,13 +191,14 @@ await step('roblox copies', async () => {
     .filter(({ g }) => !g.roblox || now - g.roblox.fetchedAt > 7 * DAY)
     .slice(0, BUDGET.roblox);
   log('  roblox queue:', candidates.length);
-  await pool(candidates, 1, 1500, async ({ g }) => {
+  const ok = await pool(candidates, 1, 5000, async ({ g }) => {
     const query = robloxQuery(g.store.name);
     const results = (await src.robloxSearch(query)).filter((r) => looksLikeCopy(g.store.name, r.name));
     const top = results.sort((a, b) => b.players - a.players || b.upVotes - a.upVotes).slice(0, 6);
     const icons = await src.robloxIcons(top.map((r) => r.universeId)).catch(() => ({}));
     g.roblox = { copies: top.map((r) => ({ ...r, icon: icons[r.universeId] || null })), fetchedAt: now };
-  });
+  }, { strikes: 5, cooldown: 90000 });
+  log('  roblox checked:', ok);
 });
 
 // ---------- 7. Save ----------

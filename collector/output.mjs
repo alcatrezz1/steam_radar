@@ -12,8 +12,16 @@ const card = (g, m) => ({
   tags: (g.spy?.tags?.length ? g.spy.tags : g.store.genres || []).slice(0, 3),
 });
 
+// Steam lists some apps as games that are really tools (Wallpaper Engine). Their genres give them away.
+const SOFTWARE_GENRES = new Set([
+  'Utilities', 'Software Training', 'Design & Illustration', 'Animation & Modeling', 'Video Production',
+  'Audio Production', 'Web Publishing', 'Photo Editing', 'Game Development', 'Education', 'Accounting',
+]);
+const isRealGame = (g) =>
+  g.store && !g.store.missing && g.store.type === 'game' && !(g.store.genres || []).some((x) => SOFTWARE_GENRES.has(x));
+
 export async function writeOutputs(state, outDir, now = Date.now()) {
-  const all = Object.values(state.games).filter((g) => g.store && !g.store.missing && g.store.type === 'game');
+  const all = Object.values(state.games).filter(isRealGame);
   const withM = all.map((g) => ({ g, m: gameMetrics(g, now) }));
 
   // 1. Popular right now
